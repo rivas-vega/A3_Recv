@@ -7,9 +7,9 @@ Starter adapted from https://github.com/fcendra-enpc/recvis26_a3 (original licen
 ## Workflow
 
 1. Open the notebook in Colab and save a working copy if needed.
-2. Run the path setup cell. Use private Google Drive for persistence, or upload competition files to the Colab runtime.
+2. Run the KaggleHub setup cell. Configure KAGGLE_API_TOKEN in Colab Secrets or run kagglehub.login() separately if authentication is needed. Browser login is not automatically shared with Colab Python.
 3. Obtain train.npz, validation.npz, test.npz and sample_submission.csv from the authenticated Kaggle competition: https://www.kaggle.com/competitions/mva-recvis-2026/data
-4. To view images, run only setup, upload (if needed), and the preview cell. It displays 24 random test images, not the entire dataset. Only test.npz is needed for this step.
+4. To view images, run only the KaggleHub setup and preview cells. It displays 24 random test images, not the entire dataset. Only test.npz is needed for this step.
 5. Training needs all four files. Select a GPU before training. The inherited baseline notebook does not yet support checkpoint/resume; do not rely on it for long runs.
 6. Upload the generated submission.csv to Kaggle manually.
 
