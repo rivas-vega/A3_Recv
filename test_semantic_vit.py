@@ -51,6 +51,59 @@ class Tests(unittest.TestCase):
         torch.testing.assert_close(z, expected.expand(2,-1))
         torch.testing.assert_close(z.norm(dim=1),torch.ones(2))
 
+    def preprocessing_fixture(self, delta=0):
+        spec=dict(size=[32,32],resample=2,mean=[0,0,0],std=[1,1,1],scale=1/255,antialias=True)
+        def reference(images, return_tensors):
+            return {'pixel_values':torch.from_numpy(np.stack([np.array(x) for x in images])).permute(0,3,1,2).float()/255}
+        class Candidate:
+            device=torch.device('cpu')
+            def __init__(self): self.spec=spec
+            def __call__(self,raw): return raw.float()/255 + delta
+        return Candidate(),reference,np.zeros((8,32,32,3),dtype=np.uint8)
+
+    def test_matching_preprocessing_keeps_gpu_path(self):
+        pp,ref,raw=self.preprocessing_fixture()
+        encoder=lambda x: torch.ones((len(x),4))
+        selected=m.validate_preprocess(encoder,pp,ref,raw,self.root/'check.json')
+        self.assertIs(selected,pp)
+        self.assertEqual(json.loads((self.root/'check.json').read_text())['selected_backend'],'gpu')
+
+    def test_pixel_difference_selects_exact_reference(self):
+        pp,ref,raw=self.preprocessing_fixture(delta=.05)
+        selected=m.validate_preprocess(lambda x:torch.ones((len(x),4)),pp,ref,raw,self.root/'check.json')
+        self.assertIsInstance(selected,m.ReferencePreprocess)
+        pixels=selected(torch.from_numpy(raw).permute(0,3,1,2))
+        torch.testing.assert_close(pixels,torch.zeros(8,3,32,32),rtol=0,atol=0)
+        report=json.loads((self.root/'check.json').read_text())
+        self.assertEqual(report['failed_checks'],['max_pixel_error'])
+        self.assertEqual(report['selected_backend'],'reference_cpu')
+
+    def test_embedding_difference_also_selects_reference(self):
+        pp,ref,raw=self.preprocessing_fixture(delta=.01)
+        encoder=lambda x:torch.stack([torch.ones(len(x)),x[:,0,0,0]*200],dim=1)
+        selected=m.validate_preprocess(encoder,pp,ref,raw,self.root/'check.json')
+        self.assertIsInstance(selected,m.ReferencePreprocess)
+        self.assertEqual(json.loads((self.root/'check.json').read_text())['failed_checks'],['min_embedding_cosine'])
+
+    def test_invalid_reference_or_encoder_still_stops(self):
+        pp,ref,raw=self.preprocessing_fixture()
+        tensor=torch.from_numpy(raw).permute(0,3,1,2)
+        invalid=lambda **kw:{'pixel_values':torch.full((8,3,32,32),float('nan'))}
+        with self.assertRaises(ValueError):
+            m.ReferencePreprocess(invalid,pp.spec,'cpu')(tensor)
+        with self.assertRaises(FloatingPointError):
+            m.validate_preprocess(lambda x:torch.full((len(x),4),float('nan')),pp,ref,raw,self.root/'check.json')
+
+    def test_reference_cache_and_head_are_separate(self):
+        pp,ref,_=self.preprocessing_fixture()
+        fallback=m.ReferencePreprocess(ref,pp.spec,'cpu')
+        self.assertNotEqual(m.cache_key(pp.spec),m.cache_key(fallback.spec))
+        original=m.probe_identity('model','revision',pp)
+        alternative=m.probe_identity('model','revision',fallback)
+        self.assertEqual(original,dict(model_id='model',revision='revision'))
+        self.assertEqual(m.probe_directory(self.root,'probe',original),self.root/'probe')
+        self.assertNotEqual(m.probe_directory(self.root,'probe',original),m.probe_directory(self.root,'probe',alternative))
+
     def test_chunk_roundtrip_and_corruption(self):
         x = np.arange(24).reshape(6,4).astype(np.float16)
         m.save_feature_chunk(x,self.root/'cache',self.root/'tmp',0,6)
