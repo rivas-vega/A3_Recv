@@ -1,4 +1,69 @@
-# A3 RecVis — DINOv3 ConvNeXt en Colab
+# A3 RecVis — SigLIP 2 Giant + DINOv3 ViT en Colab
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rivas-vega/A3_Recv/blob/main/vit_semantic.ipynb)
+
+Nuevo experimento para el cambio de dominio entre CIFAR-10 y las representaciones sintéticas de objetos de [MVA RecVis 2026](https://www.kaggle.com/competitions/mva-recvis-2026). **No tiene todavía una puntuación Kaggle medida.** El notebook CNN anterior se conserva en [`main_notebook.ipynb`](main_notebook.ipynb), y ResNet en [`resnet18_augmix.ipynb`](resnet18_augmix.ipynb).
+
+## Modelos y etiquetas
+
+| Rama | Procesamiento | Entrenamiento con nuestras etiquetas | Resultado |
+|---|---|---|---|
+| SigLIP 2 Giant semántico | 384×384 bilinear; normalización oficial 0.5/0.5; imagen completa y flip | Ninguno para clasificar; temperatura en validación | `submission_siglip_zero_shot.csv` |
+| SigLIP 2 Giant + cabeza | Igual; train original + una vista AugMix suave | Cabeza lineal de 10 clases | `submission_siglip_probe.csv` |
+| DINOv3 ViT-7B + cabeza | 256×256 bilinear; normalización ImageNet; CLS + media de patches | Cabeza lineal de 10 clases | `submission_dino_7b_probe.csv` |
+| Combinación | Probabilidades calibradas; pesos fijos 50% / 25% / 25% | Sin optimizar pesos contra Kaggle | `submission_vit_ensemble.csv` |
+
+SigLIP aporta la alineación entre conceptos y representaciones visuales adquirida en preentrenamiento imagen-texto. DINO aporta características visuales autosupervisadas. Ambos extractores permanecen congelados en este experimento: SSL describe su preentrenamiento; las etiquetas de train entrenan ahora las cabezas supervisadas. La complementariedad y la mejora sobre la CNN son hipótesis a comprobar.
+
+Los prompts proceden íntegramente de las **80 plantillas públicas de OpenCLIP**, sin añadir ni seleccionar descripciones propias. Se fijan por [commit](https://github.com/mlfoundations/open_clip/blob/4cc208d3a44a2fb6d6435006a46f520d2ccc29b1/src/open_clip/zero_shot_metadata.py) y SHA256; se usa un parser que no ejecuta el código descargado. Se conserva su [licencia MIT](OPENCLIP_LICENSE.txt). Las reglas prohíben usar modelos cerrados incluso para generar prompts: no se utiliza esa vía, ni APIs de inferencia. Los nombres y el orden de las clases son los oficiales de CIFAR-10.
+
+## Ejecutar en A100
+
+1. Abre **[`vit_semantic.ipynb`](vit_semantic.ipynb)** en Colab y selecciona A100. La configuración inicial usa DINO-7B y un presupuesto de sesión de 7 h.
+2. Ejecuta las celdas en orden. El notebook descarga [`semantic_vit.py`](semantic_vit.py) desde una revisión fija y comprueba su hash. Instala Transformers 4.57.3; conserva PyTorch/torchvision de Colab.
+3. Monta Drive. Los resultados van a `MyDrive/A3_Recv/runs/vit_giant_7b_v1`; las características reutilizables, a `MyDrive/A3_Recv/cache_semantic_vit`.
+4. Autentica Kaggle mediante `KAGGLE_API_TOKEN` en secretos o `kagglehub.login()`. Los datos privados se descargan a Colab, no al repositorio.
+5. Ejecuta SigLIP. Guarda primero un CSV semántico, después la cabeza supervisada y `submission_siglip_blend.csv` (mezcla 50/50 de las dos ramas SigLIP).
+6. En tu copia privada, escribe el token Hugging Face en **`HF_TOKEN = ""`**. DINO requiere acceso concedido al modelo exacto; se comprueban identidad y permisos sin imprimir ni guardar el token. SigLIP es público y no requiere ese permiso.
+7. Ejecuta DINO y el ensemble. Descarga el ZIP de resultados y sube **CSV individuales** a Kaggle. El ZIP de resultados no es el ZIP de código de la entrega.
+
+Para una primera comparación, sube `submission_siglip_zero_shot.csv` y `submission_vit_ensemble.csv`. Si DINO no termina, puedes comparar las ramas SigLIP. El ensemble no está garantizado como ganador; conservar las ramas permite comprobarlo.
+
+## GPU, presupuesto y reanudación
+
+- Los modelos grandes se cargan **secuencialmente**, en BF16 con SDPA. Se prueban varios tamaños de batch y se registra rendimiento y pico de VRAM. No hay una estimación de horas inventada ni una garantía de completar todo en una sesión.
+- DINO-7B tiene aproximadamente 6.7B parámetros. Por defecto se ejecuta completo y congelado; no se almacenan gradientes u optimizadores del backbone. `dino_variant='hplus'` (aprox. 840M) o `'large'` (aprox. 300M) son alternativas explícitas. Cambia también `RUN_NAME`; no hay sustitución automática.
+- Train/val/test se conservan como uint8 a 32×32. El resize y normalización se hacen por batch en GPU, contrastados contra la referencia CPU en píxeles y embeddings. Escalar no reconstruye información perdida.
+- Cachés FP16 por bloques de 2,048 imágenes con identidad del modelo, revisión, datos, transformación y versiones; verificación de forma y hash antes de reutilizarlas. Los bloques completos sobreviven a una interrupción.
+- Las cabezas guardan parámetros, estado del optimizador e historial después de cada época. Mantén `RUN_NAME` para reanudar la misma configuración. Se mide el presupuesto entre bloques/épocas; no interrumpe una descarga ni garantiza la latencia de Drive.
+- Reserva varios GB en Drive para características y decenas de GB de disco temporal en Colab para checkpoints. Los checkpoints completos no se copian a Drive ni se incluyen en GitHub.
+
+## Validación y controles
+
+Se divide la validación original por clase: 20% para selección de cabeza, 20% para temperatura y 60% para el informe. La cabeza se elige por la media de accuracy limpia y con una vista AugMix determinista. Máximo 80 épocas, paciencia 10 desde época 10, AdamW, LR inicial 1e-3 con descenso coseno. El conjunto original ya se utilizó en experimentos anteriores; no es una evaluación externa nueva.
+
+AugMix aporta un diagnóstico de robustez, pero no simula necesariamente dibujos, juguetes o tatuajes. La validación limpia tampoco estima por sí sola el rendimiento del test sintético. No se usan etiquetas ocultas, pseudoetiquetas de test, histogram matching, recortes agresivos ni generación de imágenes.
+
+Los pesos del ensemble se fijan de antemano. Las temperaturas se ajustan únicamente en el subconjunto de calibración. Se guardan probabilidades e IDs, además de CSV, para reproducir la combinación. Cada CSV se alinea con `sample_submission.csv` y valida las diez clases.
+
+Pruebas CPU: `python3 -m unittest -v test_semantic_vit` (requiere NumPy y PyTorch). Los 13 tests cubren exclusión de registros DINO, cachés, integridad, reanudación exacta de cabeza y optimizador, límites de uso de etiquetas y orden de IDs. **No equivalen a ejecutar los checkpoints completos en A100.** El notebook valida el preprocesamiento y mide el rendimiento real al ejecutarlo.
+
+Referencias: [SigLIP 2 Giant](https://huggingface.co/google/siglip2-giant-opt-patch16-384), [su procesador](https://huggingface.co/google/siglip2-giant-opt-patch16-384/blob/main/preprocessor_config.json), [DINOv3 ViT-7B](https://huggingface.co/facebook/dinov3-vit7b16-pretrain-lvd1689m), [transformación oficial DINOv3](https://github.com/facebookresearch/dinov3#image-transform).
+
+## Resultados anteriores comunicados por el participante
+
+| Experimento | Kaggle público |
+|---|---:|
+| ResNet18 bilinear | 61.093% |
+| ResNet18 AugMix | 75.796% |
+| DINOv3 ConvNeXt Base: cabeza lineal | 82.269% |
+| DINOv3 ConvNeXt Base: ajuste parcial | 86.217% |
+| Nuevo experimento ViT | Pendiente |
+
+<details>
+<summary>Documentación del experimento CNN anterior</summary>
+
+## A3 RecVis — DINOv3 ConvNeXt en Colab
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rivas-vega/A3_Recv/blob/main/main_notebook.ipynb)
 
@@ -71,3 +136,5 @@ Train/validation son CIFAR-10 y el test es sintético. Los scores de validación
 Repositorio público: no subas tokens, datos privados, características, pesos ni salidas de notebooks que contengan imágenes. `.gitignore` no borra salidas incrustadas en un notebook.
 
 Declara en el informe el checkpoint y revisión, el preentrenamiento/destilación, las transformaciones, capas entrenadas, hiperparámetros y scores medidos. La entrega del curso es PDF CVPR de una página (referencias aparte) y ZIP de código menor de 8 MB, sin datos ni pesos. El ZIP de resultados que descarga el notebook es diferente del ZIP de código.
+
+</details>
