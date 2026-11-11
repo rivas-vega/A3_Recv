@@ -22,12 +22,14 @@ No se hereda el tamaño de ResNet ni se aplica un segundo procesador que vuelva 
 ## Ejecutar
 
 1. Abre [el checkpoint](https://huggingface.co/facebook/dinov3-convnext-base-pretrain-lvd1689m) con tu cuenta Hugging Face y completa la solicitud/aceptación de acceso. Debe estar concedido antes de descargar.
-2. Crea un [token de lectura](https://huggingface.co/settings/tokens) con acceso al repositorio. Pégalo entre las comillas de **`HF_TOKEN = ""`** en la celda dedicada anterior a la carga del checkpoint y ejecuta esa celda. No se solicita en la salida ni se sustituyen tus credenciales por tokens guardados en caché. Hazlo solo en tu copia privada de Colab y borra el token antes de compartirla o guardarla en GitHub. Un error **403 / not in the authorized list** requiere obtener acceso al modelo con la misma cuenta del token; el campo de entrada no concede ese permiso.
+2. Crea un [token de tipo Read](https://huggingface.co/settings/tokens), o uno fine-grained con permiso de lectura para ese modelo gated. Pégalo entre las comillas de **`HF_TOKEN = ""`** en la celda dedicada anterior a la carga del checkpoint y ejecuta esa celda. No se solicita en la salida ni se sustituyen tus credenciales por tokens guardados en caché. Hazlo solo en tu copia privada de Colab y borra el token antes de compartirla o guardarla en GitHub. Un error **403 / not in the authorized list** requiere obtener acceso al modelo con la misma cuenta del token; el campo de entrada no concede ese permiso.
 3. Abre el notebook, selecciona GPU A100 y ejecuta las celdas en orden. No necesitas clonar ni ejecutar los scripts `.py`.
 4. Autoriza Drive para conservar cachés y checkpoints en `MyDrive/A3_Recv/runs/dinov3_convnext_base_256_v1`. La carpeta ResNet anterior queda separada.
 5. Autentica Kaggle con `KAGGLE_API_TOKEN` o el login interactivo. Debes haber aceptado las reglas con esa cuenta. KaggleHub descarga train, validation, test y sample_submission.
 6. La fase lineal genera su CSV antes del ajuste parcial. Si Colab se interrumpe, conserva ese primer resultado.
 7. Descarga `dinov3_two_submissions.zip`, descomprímelo y sube **cada CSV por separado** a Kaggle. Introduce después las puntuaciones en `KAGGLE_SCORES`.
+
+La carga del checkpoint comprueba primero la identidad del token (`whoami`) y muestra el nombre de la cuenta, sin imprimir el token. Después comprueba el permiso efectivo sobre el modelo (`auth_check`). **«Acceso de lectura a DINOv3: OK»** confirma ambas comprobaciones. Si falla la identidad, revisa o sustituye el token; si reconoce la cuenta pero falla el acceso, revisa la aprobación del modelo y los permisos del token. Un 401 durante la descarga por sí solo no distingue ambas causas. Tras cambiar el token, vuelve a ejecutar su celda y la carga del checkpoint.
 
 El notebook fija `transformers==4.57.3`, cuya implementación ConvNeXt se comprobó al preparar el código. Si Colab tenía importada otra versión, reinicia la sesión después de instalar. No instala ni sustituye PyTorch/torchvision.
 
