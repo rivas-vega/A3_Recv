@@ -1,49 +1,71 @@
-# A3 RecVis — ResNet-18 en Colab
+# A3 RecVis — DINOv3 ConvNeXt en Colab
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rivas-vega/A3_Recv/blob/main/main_notebook.ipynb)
 
-Comparación de dos CNN para la competición [MVA RecVis 2026](https://www.kaggle.com/competitions/mva-recvis-2026):
+El notebook principal compara dos adaptaciones de **DINOv3 ConvNeXt Base** para [MVA RecVis 2026](https://www.kaggle.com/competitions/mva-recvis-2026):
 
-| Modelo | Entrenamiento | Submission |
+| Fase | Entrenamiento | CSV |
 |---|---|---|
-| ResNet-18 baseline | Crop + flip y entropía cruzada | `submission_baseline.csv` |
-| ResNet-18 AugMix | Mismos crop + flip, dos vistas AugMix y consistencia JSD (peso 12) | `submission_augmix.csv` |
+| Linear probe | CNN congelada, nueva cabeza lineal de 10 clases | `submission_dinov3_linear_256.csv` |
+| Ajuste parcial | Desde la cabeza anterior; última etapa CNN + LayerNorm final + cabeza, con AugMix suave/JSD | `submission_dinov3_partial_ft_256.csv` |
 
-Ambos parten del mismo checkpoint ImageNet (`ResNet18_Weights.IMAGENET1K_V1`) y ajustan todas sus capas. Las imágenes se amplían de 32 × 32 a **128 × 128 con bilinear** en train, validación y test. Los aumentos aleatorios se aplican solo durante entrenamiento, antes del escalado.
+Checkpoint: [facebook/dinov3-convnext-base-pretrain-lvd1689m](https://huggingface.co/facebook/dinov3-convnext-base-pretrain-lvd1689m). La arquitectura ejecutada es una CNN; los pesos publicados proceden de destilación de un ViT-7B sobre imágenes web LVD-1689M. No ejecutamos ese profesor ni repetimos el preentrenamiento. Se registra una revisión inmutable del checkpoint y se verifica que todos los pesos se carguen.
+
+## Resolución y procesamiento
+
+Entrada **256 × 256**, ampliando las imágenes originales de 32 × 32 con bilinear y antialias. Orden de operaciones: tensor uint8 → resize → float [0,1] → normalización ImageNet, con media (0.485, 0.456, 0.406) y desviación (0.229, 0.224, 0.225). Es el mismo procesamiento para las características, el ajuste y la inferencia.
+
+La elección sigue el [README oficial](https://github.com/facebookresearch/dinov3/blob/6876159a11b4df116f30f667f8c9888617df0751/README.md#image-transform), que recomienda 256 para los pesos web. El paper evalúa ConvNeXt a 256 y 512. La receta pública de ejemplo de destilación ConvNeXt utiliza crops globales de 512 para el profesor y reducción por 2 para el alumno; no debe confundirse esa receta de ejemplo con toda la historia del checkpoint publicado.
+
+No se hereda el tamaño de ResNet ni se aplica un segundo procesador que vuelva a redimensionar a 224. La configuración del procesador Hugging Face se registra como referencia. No se hace recorte central adicional al evaluar estas imágenes cuadradas. La interpolación no recupera información perdida.
 
 ## Ejecutar
 
-1. Abre `main_notebook.ipynb` en Colab y selecciona una GPU A100.
-2. Ejecuta las celdas en orden. El notebook es independiente de los scripts `.py` y no necesita un clon local.
-3. Autoriza el montaje de Drive para conservar checkpoints. Por defecto, se guardan en `MyDrive/A3_Recv/runs/resnet18_augmix_128_v1`.
-4. Autentica Kaggle con `KAGGLE_API_TOKEN` en Secretos de Colab, o con el login interactivo. Obtén el token en [Kaggle Settings → API](https://www.kaggle.com/settings/api). El login del navegador no se comparte con Python. Debes haber aceptado las reglas de la competición.
-5. KaggleHub descarga los cuatro archivos privados: `train.npz`, `validation.npz`, `test.npz` y `sample_submission.csv`.
-6. Entrena baseline y AugMix. El primer CSV se guarda antes de empezar el segundo modelo.
-7. Descarga el ZIP de resultados, descomprímelo y sube **cada `submission_*.csv` por separado** a Kaggle. Copia las puntuaciones en `KAGGLE_SCORES` para completar la comparación.
+1. Abre [el checkpoint](https://huggingface.co/facebook/dinov3-convnext-base-pretrain-lvd1689m) con tu cuenta Hugging Face y completa la solicitud/aceptación de acceso. Debe estar concedido antes de descargar.
+2. Crea un [token de lectura](https://huggingface.co/settings/tokens) con acceso al repositorio. Guárdalo como **HF_TOKEN** en Secretos de Colab y permite su acceso al notebook. Si falta, se solicita con entrada oculta.
+3. Abre el notebook, selecciona GPU A100 y ejecuta las celdas en orden. No necesitas clonar ni ejecutar los scripts `.py`.
+4. Autoriza Drive para conservar cachés y checkpoints en `MyDrive/A3_Recv/runs/dinov3_convnext_base_256_v1`. La carpeta ResNet anterior queda separada.
+5. Autentica Kaggle con `KAGGLE_API_TOKEN` o el login interactivo. Debes haber aceptado las reglas con esa cuenta. KaggleHub descarga train, validation, test y sample_submission.
+6. La fase lineal genera su CSV antes del ajuste parcial. Si Colab se interrumpe, conserva ese primer resultado.
+7. Descarga `dinov3_two_submissions.zip`, descomprímelo y sube **cada CSV por separado** a Kaggle. Introduce después las puntuaciones en `KAGGLE_SCORES`.
 
-La celda opcional de actualización enlaza a la última revisión de GitHub. Una copia anterior guardada en Drive no incorpora cambios del repositorio automáticamente.
+El notebook fija `transformers==4.57.3`, cuya implementación ConvNeXt se comprobó al preparar el código. Si Colab tenía importada otra versión, reinicia la sesión después de instalar. No instala ni sustituye PyTorch/torchvision.
 
-## Entrenamiento y reanudación
+## Qué se entrena y cómo se reanuda
 
-- Hasta 30 épocas por modelo, con parada temprana tras 8 épocas sin mejora, a partir de la época 15.
-- AdamW, LR del backbone `3e-4` y de la cabeza `1e-3`, calentamiento de 2 épocas y descenso coseno. Batch de 128 imágenes originales; AugMix procesa 384 vistas.
-- Presupuesto aproximado de 2,5 horas por modelo **y por ejecución**, comprobado entre épocas. Preparación e inferencia quedan fuera. La duración real depende del runtime de Colab y se estima tras la primera época.
-- `last.pt` guarda el modelo actual, mejor modelo, optimizador, estado AMP, historial y RNG al acabar cada época. `best.pt` contiene el modelo seleccionado para inferencia.
-- Al reanudar se repite una época interrumpida y se reconstruye el LR por número de época. Los experimentos completados no se vuelven a entrenar; los pausados por tiempo continúan al volver a ejecutar su celda.
-- El mejor checkpoint se selecciona exclusivamente por precisión de validación limpia, con desempate por pérdida. Los dos experimentos pueden terminar en épocas distintas; la tabla indica cuáles se ejecutaron y cuál se eligió.
-- Cambia `RUN_NAME` para iniciar un experimento independiente o modificar hiperparámetros. El notebook detecta configuraciones y archivos de datos incompatibles con checkpoints previos.
+- **Linear probe:** características congeladas de train original y volteado; hasta 100 épocas solo de la cabeza, AdamW LR 1e-3 y paciencia 10 desde época 10. Val/test usan solo imagen completa. Se cachean las características por conjunto/vista; una extracción incompleta se repite.
+- **Ajuste parcial:** hasta 10 épocas, primeras tres etapas CNN congeladas; LR 1e-5 en última etapa y normalización final, 1e-4 en cabeza, una época de warmup y descenso coseno. Crop con padding 2 a 32px, flip, AugMix severidad 2 y JSD de peso 6. Paciencia 3 desde época 4.
+- **Presupuesto:** aproximadamente 3 h de ajuste por ejecución, comprobadas entre épocas; preparación, extracción, entrenamiento de cabeza e inferencia son adicionales. La duración se estima con la primera época real.
+- El modelo previo al ajuste es un candidato **época 0**. Si ninguna época mejora la validación, se conserva ese modelo. Esto no prueba que la validación elija el mejor resultado sobre el dominio sintético.
+- Se guarda al terminar cada época: parámetros modificables, optimizador, AMP, historial y RNG. Al reanudar se repite una época interrumpida. Las capas congeladas se reconstruyen desde la misma revisión original.
+- Los checkpoints del ajuste comprueban también la identidad de la cabeza lineal de partida. Un cambio de configuración/datos requiere un `RUN_NAME` nuevo.
+- `training_hours` de la tabla mide épocas y excluye extracción de características e inferencia. La extracción muestra su propio tiempo durante la ejecución.
+- La comparación lineal vs ajuste parcial incorpora también AugMix: compara protocolos completos de adaptación, no una ablación aislada de descongelación.
 
-Las curvas, `history.csv`, `comparison.csv` y la tasa de desacuerdo permiten inspeccionar los resultados. Train y validación son CIFAR-10; el test es sintético. La precisión de validación y el desacuerdo entre modelos **no son la precisión del test**: esta solo se obtiene en Kaggle. No hay resultados de entrenamiento incluidos en el repositorio.
+## Resultados anteriores
 
-## Código y referencias
+Comunicados por el usuario a partir de su ejecución y los scores de Kaggle; no recalculados por el asistente:
 
-- `main_notebook.ipynb`: comparación completa y autocontenida para Colab; sustituye las exploraciones de histogramas, OT y escalados.
-- `main.py`, `model.py`, `data.py`, `requirements.txt`: baseline original de línea de comandos; no implementan el nuevo experimento del notebook.
-- [Starter RecVis](https://github.com/fcendra-enpc/recvis26_a3), del que parte este repositorio; se conserva su licencia.
-- [AugMix original](https://github.com/google-research/augmix) y [transformación de torchvision](https://docs.pytorch.org/vision/stable/generated/torchvision.transforms.AugMix.html). Se usa la variante `all_ops=True` con severidad 3 y tres ramas; la pérdida compara una vista básica y dos aumentadas.
+| Experimento | Entrada | Validación | Kaggle público | Épocas / mejor |
+|---|---|---:|---:|---|
+| ResNet-18 baseline | Bilinear 128 × 128 | 96.04% | 61.093% | 30 / 29 |
+| ResNet-18 AugMix + JSD | Bilinear 128 × 128 | 96.56% | 75.796% | 30 / 29 |
+
+Se mantiene el notebook reproducible anterior: [resnet18_augmix.ipynb](https://colab.research.google.com/github/rivas-vega/A3_Recv/blob/main/resnet18_augmix.ipynb). **Todavía no se incluyen resultados reales de DINOv3.**
+
+Train/validation son CIFAR-10 y el test es sintético. Los scores de validación, confianza y desacuerdo no sustituyen la accuracy de Kaggle. Comparar DINOv3 con ResNet cambia arquitectura, preentrenamiento, resolución y adaptación; no demuestra una ventaja atribuible solo a la arquitectura.
+
+## Fuentes y código
+
+- [DINOv3: repositorio oficial](https://github.com/facebookresearch/dinov3) y [paper, sección 7.2](https://arxiv.org/html/2508.10104v1#S7.SS2).
+- [Configuración de destilación ConvNeXt de ejemplo](https://github.com/facebookresearch/dinov3/blob/6876159a11b4df116f30f667f8c9888617df0751/dinov3/configs/train/distillation_convnext/multi_distillation_convnext_test.yaml).
+- [Implementación del descriptor global ConvNeXt en Transformers 4.57.3](https://github.com/huggingface/transformers/blob/v4.57.3/src/transformers/models/dinov3_convnext/modeling_dinov3_convnext.py).
+- [Fine-Tuning can Distort Pretrained Features and Underperform Out-of-Distribution](https://arxiv.org/abs/2202.10054), motivación para evaluar primero la cabeza con extractor congelado.
+- [AugMix](https://github.com/google-research/augmix).
+- `main.py`, `model.py`, `data.py` y `requirements.txt` conservan el [starter original](https://github.com/fcendra-enpc/recvis26_a3); no ejecutan el nuevo experimento. Se conserva su licencia.
 
 ## Datos y entrega
 
-Este repositorio es público. No subas datos privados, tokens, pesos ni salidas de notebooks que contengan imágenes del dataset. `.gitignore` no borra salidas incrustadas en un `.ipynb`: límpialas antes de hacer commit.
+Repositorio público: no subas tokens, datos privados, características, pesos ni salidas de notebooks que contengan imágenes. `.gitignore` no borra salidas incrustadas en un notebook.
 
-El informe debe declarar el preentrenamiento ImageNet, las transformaciones, los hiperparámetros y los resultados medidos. La entrega del curso es un PDF CVPR de una página (referencias aparte) y un ZIP de **código** de menos de 8 MB, sin datos ni pesos. El ZIP de resultados que descarga el notebook es distinto del ZIP de código.
+Declara en el informe el checkpoint y revisión, el preentrenamiento/destilación, las transformaciones, capas entrenadas, hiperparámetros y scores medidos. La entrega del curso es PDF CVPR de una página (referencias aparte) y ZIP de código menor de 8 MB, sin datos ni pesos. El ZIP de resultados que descarga el notebook es diferente del ZIP de código.
