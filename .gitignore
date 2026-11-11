@@ -1,0 +1,15 @@
+data/
+runs/
+outputs/
+*.npz
+*.npy
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.zip
+kaggle.json
+.env
+.env.*
+__pycache__/
+.ipynb_checkpoints/
