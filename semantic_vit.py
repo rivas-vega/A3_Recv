@@ -249,6 +249,37 @@ class GPUPreprocess:
         return (resized.float().mul(self.spec["scale"]) - self.mean) / self.std
 
 
+class ReferencePreprocess:
+    """Use the exact supplied CPU processor; the encoder remains on the GPU."""
+    def __init__(self, reference, spec, device="cuda"):
+        self.reference, self.device = reference, torch.device(device)
+        # Different pixels must never share the original GPU feature cache.
+        self.spec = dict(spec, implementation="checkpoint_reference_cpu_v1")
+
+    def __call__(self, raw):
+        from PIL import Image
+        if raw.dtype != torch.uint8 or raw.ndim != 4 or raw.shape[1] != 3:
+            raise ValueError("Reference preprocessing requires BCHW uint8")
+        images = raw.detach().cpu().permute(0, 2, 3, 1).numpy()
+        pixels = self.reference(images=[Image.fromarray(x) for x in images], return_tensors="pt")["pixel_values"]
+        if pixels.shape != (len(raw), 3, *self.spec["size"]) or not torch.isfinite(pixels).all():
+            raise ValueError("Reference processor returned invalid pixels")
+        return pixels.to(device=self.device, dtype=torch.float32, non_blocking=True)
+
+
+def probe_identity(model_id, revision, preprocess):
+    identity = dict(model_id=model_id, revision=revision)
+    if isinstance(preprocess, ReferencePreprocess):
+        identity["preprocessing"] = preprocess.spec
+    return identity
+
+
+def probe_directory(root, name, identity):
+    # Keep completed original GPU probes resumable; isolate reference probes.
+    suffix = "_" + digest(identity)[:12] if "preprocessing" in identity else ""
+    return Path(root) / (name + suffix)
+
+
 def dino_descriptor(output, registers):
     tokens = output.last_hidden_state.float()
     if tokens.ndim != 3 or tokens.shape[1] <= 1 + registers:
@@ -273,19 +304,35 @@ class FrozenEncoder(nn.Module):
 
 @torch.inference_mode()
 def validate_preprocess(encoder, preprocess, reference, raw, report_path):
-    from PIL import Image
-    raw = raw[:8]
-    cpu = reference(images=[Image.fromarray(x) for x in raw], return_tensors="pt")["pixel_values"]
-    gpu = preprocess(torch.from_numpy(raw.copy()).permute(0, 3, 1, 2).contiguous())
-    max_diff = float((cpu.to("cuda") - gpu).abs().max())
-    a, b = encoder(cpu.to("cuda")), encoder(gpu)
-    min_cos = float(F.cosine_similarity(a, b).min())
+    raw = torch.from_numpy(raw[:8].copy()).permute(0, 3, 1, 2).contiguous()
+    fallback = ReferencePreprocess(reference, preprocess.spec, preprocess.device)
+    expected, gpu = fallback(raw), preprocess(raw)
+    if gpu.shape != expected.shape or not torch.isfinite(gpu).all():
+        raise ValueError("GPU preprocessor returned invalid pixels; check shape and finite values")
+    max_diff = float((expected - gpu).abs().max())
+    a, b = encoder(expected), encoder(gpu)
+    if not torch.isfinite(a).all() or not torch.isfinite(b).all():
+        raise FloatingPointError("Non-finite encoder features; preprocessing fallback cannot fix invalid model outputs")
+    min_cos = float(F.cosine_similarity(a.float(), b.float()).min())
+    failed = []
+    if max_diff > 0.025:
+        failed.append("max_pixel_error")
+    if min_cos < 0.999:
+        failed.append("min_embedding_cosine")
+    selected = fallback if failed else preprocess
     report = dict(max_pixel_error=max_diff, min_embedding_cosine=min_cos,
-                  threshold_pixel_error=0.025, threshold_embedding_cosine=0.999)
+                  threshold_pixel_error=0.025, threshold_embedding_cosine=0.999,
+                  failed_checks=failed, selected_backend="reference_cpu" if failed else "gpu",
+                  selected_preprocessing=selected.spec)
     atomic_json(report, report_path)
-    if max_diff > 0.025 or min_cos < 0.999:
-        raise RuntimeError("El preprocesado GPU no coincide suficientemente con la referencia. Consulta preprocessing_check.json.")
-    print(f"Preprocesado contrastado: error máximo {max_diff:.5f}; coseno mínimo {min_cos:.6f}.")
+    print(f"Comparación del preprocesado: error máximo {max_diff:.5f}; coseno mínimo {min_cos:.6f}.")
+    if failed:
+        print("Se usa el procesador de referencia en CPU para todas las imágenes; el modelo sigue en GPU. "
+              "Se guardan sus características y cabezas por separado de las del resize GPU.")
+    else:
+        print("Preprocesado GPU aceptado.")
+    print("Diagnóstico:", report_path)
+    return selected
 
 
 @torch.inference_mode()
@@ -629,7 +676,7 @@ class Experiment:
             atomic_torch(dict(prototypes=prototypes,model_id=model_id,revision=revision),self.root/"text_prototypes.pt")
             model.text_model.to("cpu")
             encoder=FrozenEncoder(model.vision_model,"siglip").eval()
-            validate_preprocess(encoder,pp,reference,self.data["train"],self.root/"siglip_preprocessing_check.json")
+            pp=validate_preprocess(encoder,pp,reference,self.data["train"],self.root/"siglip_preprocessing_check.json")
             perf,records=benchmark(encoder,pp,self.data["train"],[8,16,32,64],self.budget)
             atomic_json(dict(best=perf,trials=records),self.root/"siglip_benchmark.json")
             print("SigLIP: primero val/test para guardar un CSV sin entrenamiento.")
@@ -651,7 +698,7 @@ class Experiment:
                 del encoder
             del model
             release_gpu()
-        self.fit_and_export("siglip_probe",train,vf,tf,va,dict(model_id=model_id,revision=revision))
+        self.fit_and_export("siglip_probe",train,vf,tf,va,probe_identity(model_id,revision,pp))
         a,b=self.load_probabilities("siglip_zero_shot"),self.load_probabilities("siglip_probe")
         self.export_probabilities("siglip_blend",blend_probabilities([a[0],b[0]],[.5,.5]),blend_probabilities([a[1],b[1]],[.5,.5]))
 
@@ -659,7 +706,7 @@ class Experiment:
         settings=dict(seed=self.settings["seed"],lr=.001,weight_decay=.01,epochs=80,min_epochs=10,patience=10,batch=2048,
                       feature_identity=identity,data_hashes=self.data["hashes"],selection="mean_clean_augmix_accuracy")
         head=train_probe(train,self.data["train_labels"],vf,va,self.data["val_labels"],self.data["parts"][0],
-                         self.root/name,settings,self.budget)
+                         probe_directory(self.root,name,identity),settings,self.budget)
         logits_v=predict_head(head,vf)
         logits_t=predict_head(head,tf)
         logits_a=predict_head(head,va)
@@ -689,7 +736,7 @@ class Experiment:
                                             v2.ToDtype(torch.float32,scale=True),v2.Normalize(spec["mean"],spec["std"])])
             def reference(images,return_tensors):
                 return {"pixel_values":torch.stack([reference_transform(x) for x in images])}
-            validate_preprocess(encoder,pp,reference,self.data["train"],self.root/"dino_preprocessing_check.json")
+            pp=validate_preprocess(encoder,pp,reference,self.data["train"],self.root/"dino_preprocessing_check.json")
             perf,records=benchmark(encoder,pp,self.data["train"],[2,4,8,16,32],self.budget)
             atomic_json(dict(best=perf,trials=records,model_id=model_id),self.root/"dino_benchmark.json")
             images_needed=len(self.data["train"])+2*len(self.data["val"])+len(self.data["test"])
@@ -704,7 +751,7 @@ class Experiment:
             del model
             release_gpu()
         name="dino_"+self.settings["dino_variant"]+"_probe"
-        self.fit_and_export(name,train,vf,tf,va,dict(model_id=model_id,revision=revision))
+        self.fit_and_export(name,train,vf,tf,va,probe_identity(model_id,revision,pp))
         branches=[self.load_probabilities(n) for n in ("siglip_zero_shot","siglip_probe",name)]
         self.export_probabilities("vit_ensemble",blend_probabilities([b[0] for b in branches],[.5,.25,.25]),
                                   blend_probabilities([b[1] for b in branches],[.5,.25,.25]))
