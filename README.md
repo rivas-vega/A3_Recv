@@ -22,7 +22,7 @@ No se hereda el tamaño de ResNet ni se aplica un segundo procesador que vuelva 
 ## Ejecutar
 
 1. Abre [el checkpoint](https://huggingface.co/facebook/dinov3-convnext-base-pretrain-lvd1689m) con tu cuenta Hugging Face y completa la solicitud/aceptación de acceso. Debe estar concedido antes de descargar.
-2. Crea un [token de lectura](https://huggingface.co/settings/tokens) con acceso al repositorio. Guárdalo como **HF_TOKEN** en Secretos de Colab y permite su acceso al notebook. Si falta, se solicita con entrada oculta.
+2. Crea un [token de lectura](https://huggingface.co/settings/tokens) con acceso al repositorio. Pégalo entre las comillas de **`HF_TOKEN = ""`** en la celda dedicada anterior a la carga del checkpoint y ejecuta esa celda. No se solicita en la salida ni se sustituyen tus credenciales por tokens guardados en caché. Hazlo solo en tu copia privada de Colab y borra el token antes de compartirla o guardarla en GitHub. Un error **403 / not in the authorized list** requiere obtener acceso al modelo con la misma cuenta del token; el campo de entrada no concede ese permiso.
 3. Abre el notebook, selecciona GPU A100 y ejecuta las celdas en orden. No necesitas clonar ni ejecutar los scripts `.py`.
 4. Autoriza Drive para conservar cachés y checkpoints en `MyDrive/A3_Recv/runs/dinov3_convnext_base_256_v1`. La carpeta ResNet anterior queda separada.
 5. Autentica Kaggle con `KAGGLE_API_TOKEN` o el login interactivo. Debes haber aceptado las reglas con esa cuenta. KaggleHub descarga train, validation, test y sample_submission.
