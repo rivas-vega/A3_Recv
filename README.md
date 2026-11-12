@@ -1,8 +1,38 @@
 # A3 RecVis — SigLIP 2 Giant + DINOv3 ViT en Colab
 
+## Nuevo experimento: PE-Core-G y vistas locales
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rivas-vega/A3_Recv/blob/main/pe_semantic.ipynb)
+
+[`pe_semantic.ipynb`](pe_semantic.ipynb) prueba **PE-Core-G14-448**, otro modelo de imagen y texto, congelado y zero-shot. La torre visual tiene aproximadamente 1.88B parámetros y la textual 0.47B. La entrada sigue la transformación oficial: imagen completa a 448×448, bilinear PIL y normalización 0.5/0.5. Se usan las mismas 80 plantillas públicas que en SigLIP. **Todavía no hay una puntuación Kaggle de PE.**
+
+El experimento genera tres candidatos, sin enviar nada automáticamente a Kaggle:
+
+| CSV | Comparación |
+|---|---|
+| `submission_pe_zero_shot.csv` | PE, imagen completa + flip |
+| `submission_pe_local_views.csv` | PE con recortes suaves en las imágenes de menor margen |
+| `submission_siglip_pe_zero_shot.csv` | 50/50 entre SigLIP zero-shot anterior y PE completo/flip |
+
+Las vistas locales son cinco crops de 28×28 (cuatro esquinas y centro) sobre el original de 32×32. Se calculan solo en el 25% de imágenes con menor margen entre las dos primeras clases, sin usar etiquetas. Para esas imágenes, se conserva el 75% del logit de imagen completa/flip y se añade el 25% del promedio de crops. El resto no cambia. Los porcentajes son una hipótesis fijada antes de las puntuaciones de PE; no se presentan como óptimos. Un crop puede recortar parte del objeto y no crea información nueva.
+
+Usa una sesión Colab separada y el nuevo `RUN_NAME='pe_g14_448_v1'`. `PREVIOUS_RUN_NAME` debe apuntar a la carpeta anterior con `siglip_zero_shot_probabilities.npz`, no solo al CSV. Los IDs, hashes de datos, orden de clases y particiones de validación se comprueban antes de combinar. Si no se encuentra ese archivo, los CSV PE independientes siguen disponibles. El experimento anterior es un input de solo lectura.
+
+El código [`pe_semantic.py`](pe_semantic.py) descarga solo los archivos necesarios del encoder oficial desde [esta revisión](https://github.com/facebookresearch/perception_models/tree/3e352cca660658d4b5c90f42a7808b11469e4c66/core/vision_encoder), verificando cada blob y conservando `LICENSE.PE` (Apache 2.0). Las revisiones de los pesos también quedan fijadas. La carga es estricta; los pesos permanecen FP32 y las operaciones matriciales usan autocast BF16. El modelo es público y no requiere el token gated DINO.
+
+El benchmark mide el batch, velocidad y pico de memoria en la GPU real. El presupuesto inicial es de 7 horas con cachés por bloques y reanudación; no es una duración garantizada. Primero se exportan PE completo/flip y SigLIP+PE, después las vistas locales. Los CSV completos se pueden descargar si las fases posteriores se interrumpen. Las cachés incluyen cada crop, subconjunto, transformación y versión.
+
+Se mantienen la calibración y la parte reservada de validación del experimento anterior. Además se evalúan hasta 1,000 imágenes reservadas con gris, posterización de cuatro bits y blur suave. Es un diagnóstico de sensibilidad, no una validación representativa de juguetes, cómics o tatuajes; no selecciona automáticamente un candidato ni busca pesos en el leaderboard.
+
+Verificación CPU: `python3 -m unittest -q test_semantic_vit test_pe_semantic` ejecuta 29 tests sintéticos. Incluyen formatos reales de serialización con un modelo pequeño, carga estricta y congelación, recortes, selección sin etiquetas, separación de cachés y lectura alineada de predicciones previas. No sustituyen la ejecución del checkpoint completo en A100.
+
+Fuentes: [modelo PE-Core-G14-448](https://huggingface.co/facebook/PE-Core-G14-448), [transformación oficial](https://github.com/facebookresearch/perception_models/blob/3e352cca660658d4b5c90f42a7808b11469e4c66/core/vision_encoder/transforms.py).
+
+## Experimento SigLIP + DINOv3
+
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rivas-vega/A3_Recv/blob/main/vit_semantic.ipynb)
 
-Nuevo experimento para el cambio de dominio entre CIFAR-10 y las representaciones sintéticas de objetos de [MVA RecVis 2026](https://www.kaggle.com/competitions/mva-recvis-2026). **No tiene todavía una puntuación Kaggle medida.** El notebook CNN anterior se conserva en [`main_notebook.ipynb`](main_notebook.ipynb), y ResNet en [`resnet18_augmix.ipynb`](resnet18_augmix.ipynb).
+Experimento para el cambio de dominio entre CIFAR-10 y las representaciones sintéticas de objetos de [MVA RecVis 2026](https://www.kaggle.com/competitions/mva-recvis-2026). **Resultados comunicados por el participante: SigLIP zero-shot 94.015%; ensemble 94.844%.** El notebook CNN anterior se conserva en [`main_notebook.ipynb`](main_notebook.ipynb), y ResNet en [`resnet18_augmix.ipynb`](resnet18_augmix.ipynb).
 
 ## Modelos y etiquetas
 
@@ -58,7 +88,11 @@ Referencias: [SigLIP 2 Giant](https://huggingface.co/google/siglip2-giant-opt-pa
 | ResNet18 AugMix | 75.796% |
 | DINOv3 ConvNeXt Base: cabeza lineal | 82.269% |
 | DINOv3 ConvNeXt Base: ajuste parcial | 86.217% |
-| Nuevo experimento ViT | Pendiente |
+| SigLIP 2 Giant: cabeza lineal | 92.019% |
+| DINOv3 ViT-7B: cabeza lineal | 92.978% |
+| SigLIP 2 Giant: zero-shot | 94.015% |
+| Ensemble SigLIP/DINO 50/25/25 | 94.844% |
+| PE-Core-G: nuevo experimento | Pendiente |
 
 <details>
 <summary>Documentación del experimento CNN anterior</summary>
