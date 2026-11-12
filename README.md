@@ -1,10 +1,24 @@
-# A3 RecVis — SigLIP 2 Giant + DINOv3 ViT en Colab
+# A3 RecVis — PE zero-shot en Colab
+
+## Método elegido: PE zero-shot — 96,776% en Kaggle
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rivas-vega/A3_Recv/blob/main/pe_zero_shot_didactic.ipynb)
+
+El [notebook didáctico](pe_zero_shot_didactic.ipynb) explica el método de **PE-Core-G14-448 congelado**, las 80 plantillas textuales públicas, el resize bilineal directo de 32×32 a 448×448 y el promedio de puntuaciones entre imagen completa y reflejo horizontal. Incluye un diagrama de arquitectura con dimensiones oficiales, muestras aleatorias pequeñas, comparación visual ×2/×4/×14, top-3 de predicciones y errores/matriz de confusión únicamente sobre validación etiquetada.
+
+**Resultado comunicado por el participante el 12/11/2026: 0.96776 (96,776%).** Corresponde a `submission_pe_zero_shot.csv`, sin mezcla con SigLIP y sin recortes locales. No prueba que supere a PE+SigLIP, cuyo score no se ha comunicado.
+
+Por defecto `RUN_INFERENCE=False`: lee `MyDrive/A3_Recv/runs/pe_g14_448_v1` sin cargar los pesos. Para reproducir, activa esa opción en una sesión con GPU; genera solo PE en una carpeta nueva. El notebook conserva el motor de inferencia fijado y verifica la procedencia e IDs de las probabilidades antes de mostrarlas. El resize es preprocesado; el reflejo es el aumento en inferencia. La temperatura se calibra con validación y no cambia el argmax.
+
+La estructura, fuentes y contenido publicado se han revisado. Las celdas nuevas de visualización están pendientes de ejecución en Colab: el entorno local se desconectó durante la preparación. El notebook se publica sin salidas, imágenes privadas ni credenciales.
+
+Según la aclaración del profesor, **todo CIFAR-10-Warehouse queda excluido** de entrenamiento y validación. Este método usa únicamente los datos entregados por la competición y pesos/plantillas publicados.
 
 ## Nuevo experimento: PE-Core-G y vistas locales
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rivas-vega/A3_Recv/blob/main/pe_semantic.ipynb)
 
-[`pe_semantic.ipynb`](pe_semantic.ipynb) prueba **PE-Core-G14-448**, otro modelo de imagen y texto, congelado y zero-shot. La torre visual tiene aproximadamente 1.88B parámetros y la textual 0.47B. La entrada sigue la transformación oficial: imagen completa a 448×448, bilinear PIL y normalización 0.5/0.5. Se usan las mismas 80 plantillas públicas que en SigLIP. **Todavía no hay una puntuación Kaggle de PE.**
+[`pe_semantic.ipynb`](pe_semantic.ipynb) prueba **PE-Core-G14-448**, otro modelo de imagen y texto, congelado y zero-shot. La torre visual tiene aproximadamente 1.88B parámetros y la textual 0.47B. La entrada sigue la transformación oficial: imagen completa a 448×448, bilinear PIL y normalización 0.5/0.5. Se usan las mismas 80 plantillas públicas que en SigLIP. **PE zero-shot obtuvo 96,776% en Kaggle según el resultado comunicado por el participante; los otros candidatos no tienen score comunicado.**
 
 El experimento genera tres candidatos, sin enviar nada automáticamente a Kaggle:
 
@@ -92,7 +106,7 @@ Referencias: [SigLIP 2 Giant](https://huggingface.co/google/siglip2-giant-opt-pa
 | DINOv3 ViT-7B: cabeza lineal | 92.978% |
 | SigLIP 2 Giant: zero-shot | 94.015% |
 | Ensemble SigLIP/DINO 50/25/25 | 94.844% |
-| PE-Core-G: nuevo experimento | Pendiente |
+| PE-Core-G: zero-shot + reflejo horizontal | **96.776%** |
 
 <details>
 <summary>Documentación del experimento CNN anterior</summary>
