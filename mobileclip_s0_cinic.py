@@ -1,6 +1,6 @@
 """Supervised MobileCLIP2-S0 / CINIC-10. No teacher and no test-driven selection."""
 from pathlib import Path
-import csv, gc, hashlib, io, json, math, os, random, tarfile, time
+import csv, gc, hashlib, io, json, math, os, random, re, tarfile, time
 import numpy as np
 from PIL import Image
 import torch
@@ -41,6 +41,10 @@ def lock_json(obj, path):
         if json.loads(path.read_text()) != obj:
             raise RuntimeError(f'La configuración o los datos han cambiado: {path}. No reutilices esta ejecución.')
     else: atomic_json(obj, path)
+
+def stable_repr(obj):
+    # torchvision Compose includes function addresses; these change after a restart.
+    return re.sub(r" at 0x[0-9a-fA-F]+", "", repr(obj))
 
 def seed_all(seed):
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
@@ -188,7 +192,7 @@ def load_model(run_dir, cfg):
         T.RandomApply([T.ColorJitter(.15,.15,.15,.02)],p=.5)])
     train_transform=T.Compose([weak,preprocess]) if cfg['augment'] else preprocess
     manifest=dict(repo=MODEL_REPO,revision=MODEL_REVISION,weights_sha256=digest_file(weights),
-        preprocess=pp,transform=repr(preprocess),training_transform=repr(train_transform),
+        preprocess=pp,transform=stable_repr(preprocess),training_transform=stable_repr(train_transform),
         visual_parameters=sum(p.numel() for p in model.visual.parameters()),
         classifier_parameters=sum(p.numel() for p in model.head.parameters()),
         model_config=reference['model_cfg'])
