@@ -1,6 +1,28 @@
-# A3 RecVis — PE zero-shot en Colab
+# A3 RecVis — clasificación eficiente en Colab
 
-## Método elegido: PE zero-shot — 96,776% en Kaggle
+## Experimento actual: MobileCLIP2-S0 + CINIC-10, supervisado
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rivas-vega/A3_Recv/blob/main/mobileclip_s0_cinic.ipynb)
+
+[`mobileclip_s0_cinic.ipynb`](mobileclip_s0_cinic.ipynb) ajusta la torre visual de **MobileCLIP2-S0** (11.406.976 parámetros en la implementación comprobada) y una cabeza de diez clases con las etiquetas de CINIC-10. No ejecuta PE, no usa prompts ni hace destilación adicional. El preentrenamiento original de MobileCLIP2 sí utilizó profesores; no se afirma lo contrario.
+
+Protocolo fijado antes de la última entrega: CINIC `train` para entrenamiento; 10.000 imágenes estratificadas de CINIC `valid` para selección; la validación de la competición se evalúa solamente después. Su procedencia no se presupone. Se excluyen duplicados RGB exactos y reflejos horizontales entre entrenamiento y validaciones. El resto de CINIC `valid` y CINIC `test` no se usan. No se añaden por duplicado las imágenes del train de la competición. Todo CIFAR-10-Warehouse permanece excluido.
+
+La entrada oficial es 256×256 bilinear, con normalización 0/1. Se muestran cuatro imágenes de entrenamiento antes y después del preprocesado y los aumentos suaves. Tres épocas de cabeza congelando el encoder, después fine-tuning completo con LR 1e-5 en el encoder y 1e-4 en la cabeza, estadísticas BatchNorm congeladas, hasta 25 épocas totales y parada temprana. Selección exclusivamente por accuracy CINIC, con desempate por pérdida.
+
+**Colab:** GPU → ejecutar en orden → autorizar Drive → autenticar Kaggle mediante secretos o login. Los pesos S0 son públicos y no requieren acceso gated. Se guarda en `MyDrive/A3_Recv/runs/mobileclip2_s0_cinic_supervised_v1`. El presupuesto es de 6,5 horas de entrenamiento por llamada, no una estimación garantizada de duración; una interrupción reanuda desde la última época guardada. El notebook fija la revisión y hash del [motor](mobileclip_s0_cinic.py), y conserva manifiestos de configuración, pesos, versiones y datos.
+
+**Una sola exportación final:** `EXPORT_FINAL=False` por defecto. Al terminar, activarlo genera `submission_mobileclip2_s0_cinic.csv`, alineado con los IDs de `sample_submission.csv`. El test no se abre antes, no selecciona el método y no se calcula su score local. No hay envío automático a Kaggle. Los resultados de Kaggle no se utilizan para adaptar este experimento.
+
+Verificación: nueve tests sintéticos (`python3 -m unittest discover -s . -p test_mobileclip_s0_cinic.py -v`); carga estricta del checkpoint real, forward y paso de aprendizaje comprobados en CPU con OpenCLIP 3.2.0 / timm 1.0.22. Las celdas Python compilan. **Entrenamiento completo y ejecución integral en A100 pendientes; no hay accuracy inventada.** Los pesos de Drive no deben incluirse en el ZIP de código.
+
+---
+
+## Historial de experimentos
+
+Las secciones siguientes documentan trabajo anterior. Sus propuestas de varias submissions no forman parte del protocolo final actual.
+
+## Referencia anterior: PE zero-shot — 96,776% en Kaggle
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rivas-vega/A3_Recv/blob/main/pe_zero_shot_didactic.ipynb)
 
