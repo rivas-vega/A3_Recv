@@ -10,7 +10,8 @@ from torch.utils.data import Dataset, DataLoader
 CLASSES = ('airplane','automobile','bird','cat','deer','dog','frog','horse','ship','truck')
 MODEL_REPO = 'timm/MobileCLIP2-S0-OpenCLIP'
 MODEL_REVISION = '095906d28bf54d7584dc411e8ffe448f34289e05'
-CINIC_URL = 'https://datashare.is.ed.ac.uk/bitstream/handle/10283/3192/CINIC-10.tar.gz'
+# Current DSpace content endpoint; the legacy /bitstream/handle redirect returns 403 on Colab.
+CINIC_URL = 'https://datashare.ed.ac.uk/server/api/core/bitstreams/e8e186cc-2688-48f1-aa5a-3fda1a43f8b6/content'
 DEFAULTS = dict(seed=42, batch_size=128, workers=2, warmup_epochs=3,
     max_epochs=25, min_finetune_epochs=5, patience=5, head_lr=1e-3,
     finetune_head_lr=1e-4, encoder_lr=1e-5, weight_decay=.01,
