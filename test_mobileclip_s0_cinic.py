@@ -1,4 +1,6 @@
-import json, tempfile, unittest
+import io, json, tempfile, unittest
+from unittest.mock import patch
+from PIL import Image
 from pathlib import Path
 import numpy as np
 import torch
@@ -6,6 +8,51 @@ from torch import nn
 import mobileclip_s0_cinic as m
 
 class Tests(unittest.TestCase):
+    def test_kaggle_token_secret(self):
+        secret={'KAGGLE_API_TOKEN':'  example-token  '}
+        self.assertEqual(m.read_kaggle_secrets(secret.__getitem__), {'KAGGLE_API_TOKEN':'example-token'})
+    def test_kaggle_legacy_secrets(self):
+        secret={'KAGGLE_USERNAME':'example-user','KAGGLE_KEY':'example-key'}
+        self.assertEqual(m.read_kaggle_secrets(secret.__getitem__),secret)
+    def test_kaggle_missing_or_denied_never_prompts(self):
+        with self.assertRaisesRegex(RuntimeError,'KAGGLE_API_TOKEN'):
+            m.read_kaggle_secrets({}.__getitem__)
+        def denied(name): raise PermissionError('sensitive-detail')
+        with self.assertRaisesRegex(RuntimeError,'activa') as exc:
+            m.read_kaggle_secrets(denied)
+        self.assertNotIn('sensitive-detail',str(exc.exception))
+    def test_parquet_parser_original_names_pixels_labels(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        rows=[]
+        for label in range(10):
+            for i in range(2):
+                buffer=io.BytesIO(); Image.fromarray(np.full((32,32,3),label*10+i,np.uint8)).save(buffer,format='PNG')
+                rows.append({'image':{'bytes':buffer.getvalue(),'path':f'example-{label}-{i}.png'},'label':label})
+        table=pa.Table.from_pylist(rows).replace_schema_metadata({b'huggingface':json.dumps(
+            {'info':{'features':{'label':{'names':list(m.CLASSES)}}}}).encode()})
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)/'train.parquet';pq.write_table(table,p)
+            data=m._read_cinic_parquet(p,'train',expected_count=20)
+            self.assertEqual(data['train_names'][0],'train/airplane/example-0-0.png')
+            self.assertEqual(data['train_x'][3,0,0,0],11)
+            self.assertEqual(data['train_y'][3],1)
+            with self.assertRaisesRegex(ValueError,'filas'):
+                m._read_cinic_parquet(p,'train',expected_count=90000)
+            bad=table.replace_schema_metadata({b'huggingface':json.dumps(
+                {'info':{'features':{'label':{'names':list(reversed(m.CLASSES))}}}}).encode()})
+            pq.write_table(bad,p)
+            with self.assertRaisesRegex(ValueError,'orden de clases'):
+                m._read_cinic_parquet(p,'train',expected_count=20)
+    def test_mirror_checksum_fails_before_using_images(self):
+        import sys,types
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)/'bad.parquet';p.write_bytes(b'not the official mirror')
+            hub=types.SimpleNamespace(hf_hub_download=lambda *args,**kwargs:str(p))
+            with patch.dict(sys.modules,{'huggingface_hub':hub}),patch.object(m,'_read_cinic_parquet') as parse:
+                with self.assertRaisesRegex(ValueError,'Checksum'):
+                    m.download_cinic(Path(d)/'cache')
+                parse.assert_not_called()
     def test_stable_transform_manifest(self):
         class Transform:
             def __repr__(self): return "<function rgb at 0x123abc>"
