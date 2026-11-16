@@ -1,6 +1,6 @@
 """Supervised MobileCLIP2-S0 / CINIC-10. No teacher and no test-driven selection."""
 from pathlib import Path
-import csv, gc, hashlib, io, json, math, os, random, re, tarfile, time
+import csv, gc, hashlib, io, json, math, os, random, re, time
 import numpy as np
 from PIL import Image
 import torch
@@ -10,8 +10,13 @@ from torch.utils.data import Dataset, DataLoader
 CLASSES = ('airplane','automobile','bird','cat','deer','dog','frog','horse','ship','truck')
 MODEL_REPO = 'timm/MobileCLIP2-S0-OpenCLIP'
 MODEL_REVISION = '095906d28bf54d7584dc411e8ffe448f34289e05'
-# Current DSpace content endpoint; the legacy /bitstream/handle redirect returns 403 on Colab.
-CINIC_URL = 'https://datashare.ed.ac.uk/server/api/core/bitstreams/e8e186cc-2688-48f1-aa5a-3fda1a43f8b6/content'
+# Flower mirror: same original train/valid PNGs, pinned and independently verified.
+CINIC_REPO = 'flwrlabs/cinic10'
+CINIC_REVISION = '44c23bab233087df95aad862c5b6fa0e5e6030cf'
+CINIC_FILES = {
+    'train': ('data/train-00000-of-00001.parquet', 'dd44e8832411a2f9d80ded629813ad450de9339032bd0e8afbae40029da43d07'),
+    'valid': ('data/validation-00000-of-00001.parquet', '3ea8bea7b2cf33fefe9f450dc86307139a2fc89954e079a86e93bc48a18cff5d'),
+}
 DEFAULTS = dict(seed=42, batch_size=128, workers=2, warmup_epochs=3,
     max_epochs=25, min_finetune_epochs=5, patience=5, head_lr=1e-3,
     finetune_head_lr=1e-4, encoder_lr=1e-5, weight_decay=.01,
@@ -70,50 +75,101 @@ def read_validation(root):
         raise ValueError('Etiquetas de validación incompatibles con CIFAR-10')
     return x, y.astype(np.int64), digest_file(path)
 
+def read_kaggle_secrets(get_secret):
+    """Read Colab secrets without prompting, printing, or persisting credentials."""
+    def read(name):
+        try:
+            value = get_secret(name)
+        except Exception as exc:
+            if isinstance(exc, KeyError) or type(exc).__name__ == 'SecretNotFoundError':
+                return None
+            raise RuntimeError(f'Colab no permite leer {name}. En Secretos (llave), activa '
+                               'el acceso de este notebook y vuelve a ejecutar.') from None
+        return str(value).strip() if value is not None else None
+    token = read('KAGGLE_API_TOKEN')
+    if token:
+        return {'KAGGLE_API_TOKEN': token}
+    username, key = read('KAGGLE_USERNAME'), read('KAGGLE_KEY')
+    if username and key:
+        return {'KAGGLE_USERNAME': username, 'KAGGLE_KEY': key}
+    raise RuntimeError('Configura una sola vez KAGGLE_API_TOKEN en Secretos de Colab (icono de llave), '
+                       'con el valor completo del token y acceso al notebook activado. '
+                       'Para una credencial antigua kaggle.json, usa los dos secretos '
+                       'KAGGLE_USERNAME y KAGGLE_KEY. No hay login interactivo.')
+
+def configure_kaggle_secrets():
+    from google.colab import userdata
+    from kagglehub import config as kaggle_config
+    credentials = read_kaggle_secrets(userdata.get)
+    # Override cached credentials as well: re-running this cell respects edited secrets.
+    kaggle_config.clear_kaggle_credentials()
+    if 'KAGGLE_API_TOKEN' in credentials:
+        os.environ['KAGGLE_API_TOKEN'] = credentials['KAGGLE_API_TOKEN']
+        kaggle_config.set_kaggle_api_token(credentials['KAGGLE_API_TOKEN'])
+    else:
+        os.environ.pop('KAGGLE_API_TOKEN', None)
+        os.environ.update(credentials)
+        kaggle_config.set_kaggle_credentials(credentials['KAGGLE_USERNAME'], credentials['KAGGLE_KEY'])
+    del credentials
+    print('Kaggle: credenciales leídas de Secretos; sin entrada interactiva.')
+
+def _read_cinic_parquet(path, split, expected_count=90000):
+    import pyarrow.parquet as pq
+    pf = pq.ParquetFile(path)
+    if pf.metadata.num_rows != expected_count:
+        raise ValueError(f'CINIC {split}: número de filas inesperado')
+    metadata = json.loads(pf.schema_arrow.metadata[b'huggingface'])
+    if metadata['info']['features']['label']['names'] != list(CLASSES):
+        raise ValueError('El orden de clases del mirror no coincide con CIFAR-10')
+    records = []
+    for batch in pf.iter_batches(batch_size=512, columns=['image', 'label']):
+        for row in batch.to_pylist():
+            label = row['label']; image = row['image']
+            if not isinstance(label, int) or not 0 <= label < 10:
+                raise ValueError('Etiqueta CINIC inválida')
+            if not image['bytes'] or not image['path']:
+                raise ValueError('Falta el PNG o el nombre original; no se inventan IDs')
+            name = f"{split}/{CLASSES[label]}/{Path(image['path']).name}"
+            with Image.open(io.BytesIO(image['bytes'])) as im:
+                x = np.asarray(im.convert('RGB'), dtype=np.uint8).copy()
+            if x.shape != (32,32,3): raise ValueError(f'Imagen inesperada: {name}')
+            records.append((name, label, x))
+    records.sort(key=lambda row: row[0])
+    names = np.array([row[0] for row in records])
+    labels = np.array([row[1] for row in records], dtype=np.int64)
+    if len(set(names)) != expected_count or not (np.bincount(labels,minlength=10)==expected_count//10).all():
+        raise ValueError('CINIC: nombres duplicados o balance de clases inesperado')
+    return {split+'_names': names, split+'_y': labels,
+            split+'_x': np.stack([row[2] for row in records])}
+
 def download_cinic(cache):
-    """Official archive; never extract arbitrary tar paths or links."""
-    import requests
-    from tqdm.auto import tqdm
+    """Verified HF mirror: fetch train/validation only, never contact Edinburgh."""
+    from huggingface_hub import hf_hub_download
     cache = Path(cache); cache.mkdir(parents=True, exist_ok=True)
-    path = cache/'CINIC-10.tar.gz'
-    if not path.exists():
-        tmp = path.with_suffix('.part')
-        with requests.get(CINIC_URL, stream=True, timeout=(30,180)) as r:
-            r.raise_for_status()
-            with open(tmp,'wb') as f, tqdm(total=int(r.headers.get('Content-Length',0)) or None,
-                                         unit='B', unit_scale=True, desc='CINIC-10') as bar:
-                for chunk in r.iter_content(4*1024*1024):
-                    f.write(chunk); bar.update(len(chunk))
-        os.replace(tmp,path)
-    archive_hash = digest_file(path)
-    packed = cache/'cinic_train_valid.npz'; info_path = cache/'cinic_pack.json'
+    packed = cache/'cinic_hf_train_valid.npz'; info_path = cache/'cinic_hf_pack.json'
+    source = dict(repo=CINIC_REPO, revision=CINIC_REVISION,
+                  files={split: {'filename': name, 'sha256': sha} for split,(name,sha) in CINIC_FILES.items()})
     if packed.exists() and info_path.exists():
         info = json.loads(info_path.read_text())
-        if info['archive_sha256']==archive_hash and info['pack_sha256']==digest_file(packed):
+        if info.get('source') == source and info.get('pack_sha256') == digest_file(packed):
             with np.load(packed,allow_pickle=False) as z: data = {k:z[k] for k in z.files}
             return data, info
-    buffers = {s:[] for s in ('train','valid')}
-    with tarfile.open(path,'r:gz') as tar:
-        for member in tqdm(tar, desc='Leer PNG train/valid'):
-            parts = Path(member.name).parts
-            if not member.isfile() or len(parts)<3 or not parts[-1].endswith('.png'): continue
-            split, cls, name = parts[-3:]
-            if split not in buffers or cls not in CLASSES: continue
-            with tar.extractfile(member) as f, Image.open(io.BytesIO(f.read())) as im:
-                x = np.asarray(im.convert('RGB'),dtype=np.uint8).copy()
-            if x.shape!=(32,32,3): raise ValueError(f'Imagen inesperada: {member.name}')
-            buffers[split].append((f'{split}/{cls}/{name}', CLASSES.index(cls), x))
     data = {}
-    for split, records in buffers.items():
-        records.sort(key=lambda r:r[0])
-        if len(records)!=90000: raise ValueError(f'{split}: esperadas 90000 imágenes, hay {len(records)}')
-        data[split+'_names'] = np.array([r[0] for r in records])
-        data[split+'_y'] = np.array([r[1] for r in records],dtype=np.int64)
-        data[split+'_x'] = np.stack([r[2] for r in records])
+    for split,(filename,expected_sha) in CINIC_FILES.items():
+        print(f'CINIC {split}: descarga desde Hugging Face; no requiere token.')
+        path = hf_hub_download(CINIC_REPO, filename, repo_type='dataset',
+                               revision=CINIC_REVISION, cache_dir=str(cache/'hf'), token=False)
+        if digest_file(path) != expected_sha:
+            raise ValueError(f'Checksum incorrecto del mirror: {filename}; no se usan estos datos')
+        data.update(_read_cinic_parquet(path,split))
     with open(str(packed)+'.tmp','wb') as f: np.savez(f,**data)
     os.replace(str(packed)+'.tmp',packed)
-    info = dict(url=CINIC_URL,archive_sha256=archive_hash,pack_sha256=digest_file(packed))
-    atomic_json(info,info_path)
+    info = dict(source=source, pack_sha256=digest_file(packed),
+        original_dataset='https://doi.org/10.7488/ds/2448',
+        original_archive_md5='6ee4d0c996905fe93221de577967a372',
+        original_archive_sha256='31b095acf6d75e25a9e028bae82a07a0f94ff6b00671be2802d34ac4efa81a9e',
+        equivalence='All 180000 train/valid names, RGB pixels and labels checked against original archive')
+    atomic_json(info, info_path)
     return data,info
 
 def pixel_keys(x):
