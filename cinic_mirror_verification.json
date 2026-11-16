@@ -1,0 +1,18 @@
+{
+  "train": {
+    "parquet_sha256": "dd44e8832411a2f9d80ded629813ad450de9339032bd0e8afbae40029da43d07",
+    "rows": 90000
+  },
+  "valid": {
+    "parquet_sha256": "3ea8bea7b2cf33fefe9f450dc86307139a2fc89954e079a86e93bc48a18cff5d",
+    "rows": 90000
+  },
+  "official_archive_md5": "6ee4d0c996905fe93221de577967a372",
+  "verified": "all names, RGB pixels and class labels identical in train and valid",
+  "mirror_revision": "44c23bab233087df95aad862c5b6fa0e5e6030cf",
+  "verified_on": "2026-11-16",
+  "mirror": "https://huggingface.co/datasets/flwrlabs/cinic10",
+  "original": "https://doi.org/10.7488/ds/2448",
+  "mismatches": 0,
+  "scope": "CINIC train and valid only; no competition test data accessed"
+}
