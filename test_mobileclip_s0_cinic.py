@@ -6,6 +6,10 @@ from torch import nn
 import mobileclip_s0_cinic as m
 
 class Tests(unittest.TestCase):
+    def test_stable_transform_manifest(self):
+        class Transform:
+            def __repr__(self): return "<function rgb at 0x123abc>"
+        self.assertEqual(m.stable_repr(Transform()), "<function rgb>")
     def test_duplicates_and_flips(self):
         x=np.random.default_rng(9).integers(0,256,(3,32,32,3),dtype=np.uint8)
         keys=m.pixel_keys(np.concatenate([x,x[:1,:,::-1,:]]))
