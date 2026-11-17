@@ -1,6 +1,29 @@
 # A3 RecVis — clasificación eficiente en Colab
 
-## Experimento actual: MobileCLIP2-S0 + CINIC-10, supervisado
+## Experimento actual: S0 + diversidad de datos, tres ablaciones
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rivas-vega/A3_Recv/blob/main/s0_domain_generalization.ipynb)
+
+El nuevo [notebook didáctico](s0_domain_generalization.ipynb) compara **CINIC**, **CINIC + DomainNet** y **la misma mezcla + AdaIN**, con MobileCLIP2-S0 y la misma inicialización. No modifica los outputs ni los checkpoints del experimento anterior.
+
+- **Presupuesto:** 15 épocas de 400 actualizaciones por variante, batch 128; dos épocas de cabeza y trece de fine-tuning. Sin parada temprana. BF16 cuando está disponible. La referencia se reentrena: no es la antigua ejecución de 25 épocas.
+- **Fuentes nuevas:** listados oficiales depurados de DomainNet: 1.221 clipart-train y 2.173 painting-train compatibles antes de deduplicar. No existe deer; ship agrupa cuatro categorías explícitas. Muestreo de etiquetas uniforme, con 30% de probabilidad de DomainNet para las nueve clases cubiertas. Ambas fuentes tienen la misma probabilidad.
+- **AdaIN abierto:** VGG/decoder congelados, pesos de la release pública fijados por SHA256 y licencia MIT conservada. Solo usa painting-train como donantes. Una vista por original, aplicada en el 30% de muestras de C. B/C ven los mismos IDs en el mismo orden. No hay teacher clasificador, prompts ni destilación adicional. El preentrenamiento original de S0 sí utilizó profesores.
+- **Baja resolución:** RGB32 → AdaIN a 128 y mezcla moderada → RGB32 → preprocesado oficial S0 bilineal a 256. La ampliación no reconstruye detalle. Esta aproximación no reproduce Stylized-ImageNet ni utiliza originales en alta resolución.
+- **Selección:** media de accuracy macro de CINIC-valid (2.000 imágenes), clipart-test y painting-test. Los splits llamados test por DomainNet son aquí validación externa declarada. Sketch-test y validación de la competición se evalúan únicamente después de congelar el ganador.
+- **Separación:** hashes RGB32 y reflejos horizontales antes de transformar; se retiran claves con etiquetas contradictorias del desarrollo. No se afirma haber eliminado todo duplicado aproximado. Warehouse permanece excluido.
+- **Salida:** comparación local por dominio y un solo CSV opcional, `submission_s0_domain_generalization.csv`, del ganador de selección. No abre test antes de exportar ni calcula métricas de test. No hay envío automático.
+
+**Colab:** abre el botón, selecciona GPU y ejecuta en orden. Se reutiliza `KAGGLE_API_TOKEN` desde Secretos. La primera descarga DomainNet transfiere ~7,5 GB y elimina cada ZIP después de conservar las categorías compatibles a 32×32; los ZIP se procesan en disco temporal. Reserva unos 6 GB temporales y varios GB en Drive. Los datos procesados, la caché AdaIN por bloques y los checkpoints se conservan en Drive. `SESSION_HOURS=6.5` se comparte entre las tres variantes por llamada de entrenamiento; la preparación AdaIN tiene su presupuesto separado y reanudable. No se garantiza completar todo en una sesión.
+
+El notebook muestra muestras pequeñas aleatorias, ampliación bilineal, una imagen estilizada de cada clase, arquitectura, curvas y resultados. El notebook previo con las salidas del usuario queda intacto.
+
+**Verificación:** [GitHub Actions](https://github.com/rivas-vega/A3_Recv/actions/workflows/s0_domain_generalization.yml) ejecuta tests sintéticos de separación, muestreo, congelación y exportación, verifica los listados oficiales y acceso a los ZIP, carga estrictamente ambos checkpoints AdaIN y ejecuta su forward; también comprueba S0 real y un paso de cabeza en CPU. No equivale a descargar/procesar todos los ZIP ni a entrenar A/B/C en A100. El entrenamiento completo sigue pendiente de ejecución en Colab.
+
+---
+
+## Experimento anterior: MobileCLIP2-S0 + CINIC-10, supervisado
+
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rivas-vega/A3_Recv/blob/main/mobileclip_s0_cinic.ipynb)
 
