@@ -27,6 +27,15 @@ DEFAULTS = dict(base.DEFAULTS, max_epochs=15, warmup_epochs=2,
     style_pixel_blend=.5, style_batch_size=32, style_chunk=512)
 RELEASE = "https://github.com/naoto0804/pytorch-AdaIN/releases/download/v0.0.0/"
 ASSETS = {"decoder.pth":14023458, "vgg_normalised.pth":80102481}
+ASSET_SHA256 = {
+ "vgg_normalised.pth":"804ca2835ecf7539f0cd2a7ac3c18ce81e6f8468969ae7117ac0c148d286bb4a",
+ "decoder.pth":"379ca41d59f3a37eed3599bbbc2560c19da5c458870a5ffd3a9dd41aa88f9472"}
+LIST_SHA256 = {
+ "clipart_train":"affdadf5f95a7583e6b98030a3d35007e2613ee4dd942393c5a705ec2b429312",
+ "clipart_test":"62c8e36aaba1c41ad9e249099739707220a44c08f167b37ef420f34a31628a6b",
+ "painting_train":"f1da38d50a702fddf1329f85bc607d7a2abcae7e6aec75e1fd49cc1bd340d47b",
+ "painting_test":"11472b13b5188e09f06918b12eebb660588c97a20e43e268d9b02e3e37eb8f97",
+ "sketch_test":"3fb48fca18c507c4321f007c3f62b308ec232ff6928cbfe2af64e76ec366e840"}
 
 def download(url, path, expected_size=None):
     """Retry and resume large public files; persist first-download SHA256."""
@@ -107,9 +116,10 @@ def read_zip(archive, records):
             ys.append(y); names.append(name)
     return dict(x=np.stack(xs),y=np.array(ys,dtype=np.int64),names=np.array(names))
 
-def download_domainnet(cache, keep_archives=False):
+def download_domainnet(cache, keep_archives=False, download_dir=None):
     """Only official cleaned lists; selected images cached as uint8 at 32x32."""
     cache=Path(cache)/"domainnet"; cache.mkdir(parents=True,exist_ok=True)
+    archive_dir=Path(download_dir) if download_dir else cache
     packs={}; provenance={}
     for domain in DOMAINS:
         needed=[split for d,split in SPLITS if d==domain]
@@ -117,6 +127,8 @@ def download_domainnet(cache, keep_archives=False):
         for split in needed:
             url=ROOT+f"domainnet/txt/{domain}_{split}.txt"
             file=download(url,cache/f"{domain}_{split}.txt")
+            if base.digest_file(file)!=LIST_SHA256[f"{domain}_{split}"]:
+                raise ValueError("El listado oficial ha cambiado; se requiere revisar la nueva versión.")
             records[split]=parse_list(file.read_text(),domain)
             sources[split]=dict(url=url,sha256=base.digest_file(file))
         packed=cache/f"{domain}_32.npz"; meta_path=cache/f"{domain}_32.json"
@@ -126,7 +138,7 @@ def download_domainnet(cache, keep_archives=False):
             if meta["identity"]!=identity or meta["sha256"]!=base.digest_file(packed):
                 raise ValueError(f"Cache incompatible: {packed}")
         else:
-            archive=download(ARCHIVES[domain],cache/f"{domain}.zip")
+            archive=download(ARCHIVES[domain],archive_dir/f"{domain}.zip")
             arrays={}
             for split in needed:
                 for k,v in read_zip(archive,records[split]).items(): arrays[split+"_"+k]=v
@@ -256,6 +268,7 @@ class AdaIN:
         self.manifest={}
         for filename,model in (("vgg_normalised.pth",self.encoder),("decoder.pth",self.decoder)):
             p=download(RELEASE+filename,Path(cache)/"adain"/filename,ASSETS[filename])
+            if base.digest_file(p)!=ASSET_SHA256[filename]: raise ValueError("Los pesos AdaIN han cambiado")
             model.load_state_dict(torch.load(p,map_location="cpu",weights_only=True),strict=True)
             self.manifest[filename]=dict(url=RELEASE+filename,sha256=base.digest_file(p))
         self.encoder=nn.Sequential(*list(self.encoder.children())[:31])
@@ -407,7 +420,8 @@ def choose_completed(run_dir,protocols):
         if not status["completed"]: raise RuntimeError("Completa las tres variantes antes de elegir")
         checkpoint=torch.load(path/"best.pt",map_location="cpu",weights_only=True)
         if checkpoint["protocol_hash"]!=base.json_hash(protocols[arm]): raise RuntimeError("Protocolo incompatible")
-        scores[arm]=status["best"]
+        if checkpoint["best"]!=status["best"]: raise RuntimeError("Métricas de checkpoint y estado no coinciden")
+        scores[arm]=checkpoint["best"]
         fingerprints[arm]=dict(checkpoint_sha256=base.digest_file(path/"best.pt"),
             protocol_hash=checkpoint["protocol_hash"])
     winner=min(ARMS,key=lambda a:(-scores[a]["accuracy"],scores[a]["loss"],ARMS.index(a)))

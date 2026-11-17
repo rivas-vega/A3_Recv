@@ -103,7 +103,7 @@ class ProtocolTests(unittest.TestCase):
                 p=root/a; p.mkdir()
                 score=dict(accuracy=.8,loss=.3,epoch=1)
                 base.atomic_json(dict(completed=True,best=score),p/"status.json")
-                base.atomic_save(dict(protocol_hash=base.json_hash(protocols[a])),p/"best.pt")
+                base.atomic_save(dict(protocol_hash=base.json_hash(protocols[a]),best=score),p/"best.pt")
             chosen=d.choose_completed(root,protocols); self.assertEqual(chosen["winner"],"cinic")
             base.atomic_json(dict(completed=False,best=score),root/d.ARMS[1]/"status.json")
             with self.assertRaises(RuntimeError): d.choose_completed(root,protocols)
@@ -118,6 +118,7 @@ class NetworkTests(unittest.TestCase):
         for domain,split in d.SPLITS:
             url=d.ROOT+f"domainnet/txt/{domain}_{split}.txt"
             r=requests.get(url,timeout=90); r.raise_for_status()
+            self.assertEqual(__import__("hashlib").sha256(r.content).hexdigest(),d.LIST_SHA256[f"{domain}_{split}"])
             rows=d.parse_list(r.text,domain)
             self.assertEqual(set(row[1] for row in rows),set(d.COVERED))
             print("SOURCE",domain,split,len(rows),__import__("hashlib").sha256(r.content).hexdigest(),flush=True)
